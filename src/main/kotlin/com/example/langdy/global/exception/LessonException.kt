@@ -22,11 +22,11 @@ enum class LessonErrorType(
     override fun prefix(): String = "api.lesson"
 }
 
-class LessonSystemErrorException : LessonException(LessonErrorType.SYSTEM_ERROR)
-class LessonUnauthorizedException : LessonException(LessonErrorType.UNAUTHORIZED_REQUEST)
+class LessonSystemErrorException(message: String? = null) : LessonException(LessonErrorType.SYSTEM_ERROR, message)
+class LessonUnauthorizedException(message: String? = null) : LessonException(LessonErrorType.UNAUTHORIZED_REQUEST, message)
 class LessonBadRequestException(message: String? = null) : LessonException(LessonErrorType.BAD_REQUEST, message)
-class LessonEntityNotFoundException : LessonException(LessonErrorType.ENTITY_NOT_FOUND)
-class LessonInvalidDateException : LessonException(LessonErrorType.INVALID_DATE_REQUEST)
-class LessonAlreadyBookedException : LessonException(LessonErrorType.ALREADY_LESSON_BOOKED)
-class LessonDuplicateException : LessonException(LessonErrorType.DUPLICATE_LESSON)
-class LessonWaitingProcessingException : LessonException(LessonErrorType.WAITING_PROCESSING)
+class LessonEntityNotFoundException(message: String? = null) : LessonException(LessonErrorType.ENTITY_NOT_FOUND, message)
+class LessonInvalidDateException(message: String? = null) : LessonException(LessonErrorType.INVALID_DATE_REQUEST, message)
+class LessonAlreadyBookedException(message: String? = null) : LessonException(LessonErrorType.ALREADY_LESSON_BOOKED, message)
+class LessonDuplicateException(message: String? = null) : LessonException(LessonErrorType.DUPLICATE_LESSON, message)
+class LessonWaitingProcessingException(message: String? = null) : LessonException(LessonErrorType.WAITING_PROCESSING, message)

@@ -38,14 +38,14 @@ class LessonService(
         validateStartTime(startAt)
         val endAt = startAt.plusMinutes(LESSON_DURATION_MINUTES)
 
-        val student = studentRepository.findById(studentId).orElseThrow { LessonEntityNotFoundException() }
-        val teacher = teacherRepository.findById(teacherId).orElseThrow { LessonEntityNotFoundException() }
-        val course = courseRepository.findById(courseId).orElseThrow { LessonEntityNotFoundException() }
+        val student = studentRepository.findById(studentId).orElseThrow { LessonEntityNotFoundException("학생을 찾을 수 없습니다: $studentId") }
+        val teacher = teacherRepository.findById(teacherId).orElseThrow { LessonEntityNotFoundException("선생님을 찾을 수 없습니다: $teacherId") }
+        val course = courseRepository.findById(courseId).orElseThrow { LessonEntityNotFoundException("코스를 찾을 수 없습니다: $courseId") }
 
         val activeStatuses = listOf(Lesson.Status.BOOKED, Lesson.Status.DONE)
 
         if (lessonRepository.existsBookedByTeacherOrStudent(teacher, student, startAt, activeStatuses)) {
-            throw LessonAlreadyBookedException()
+            throw LessonAlreadyBookedException("이미 신청한 수업입니다.")
         }
 
         val lesson = lessonRepository.save(
@@ -80,14 +80,14 @@ class LessonService(
     fun getAvailableTeachers(studentId: Long, courseId: Long, startAt: LocalDateTime): List<TeacherResult> {
         validateStartTime(startAt)
 
-        val student = studentRepository.findById(studentId).orElseThrow { LessonEntityNotFoundException() }
+        val student = studentRepository.findById(studentId).orElseThrow { LessonEntityNotFoundException("학생을 찾을 수 없습니다: $studentId") }
 
-        if (!courseRepository.existsById(courseId)) throw LessonEntityNotFoundException()
+        if (!courseRepository.existsById(courseId)) throw LessonEntityNotFoundException("코스를 찾을 수 없습니다: $courseId")
 
         val activeStatuses = listOf(Lesson.Status.BOOKED, Lesson.Status.DONE)
 
         if (lessonRepository.existsBookedByStudent(student, startAt, activeStatuses)) {
-            throw LessonAlreadyBookedException()
+            throw LessonAlreadyBookedException("이미 수업 신청한 시간입니다.")
         }
 
         val teachers = teacherRepository.findAvailableTeachers(startAt, activeStatuses)
@@ -96,7 +96,7 @@ class LessonService(
     }
 
     private fun validateStartTime(startAt: LocalDateTime) {
-        if (startAt.minute != 0 && startAt.minute != 30) throw LessonInvalidDateException()
-        if (startAt.isBefore(LocalDateTime.now())) throw LessonInvalidDateException()
+        if (startAt.minute != 0 && startAt.minute != 30) throw LessonInvalidDateException("올바른 시작 시각이 아닙니다.")
+        if (startAt.isBefore(LocalDateTime.now())) throw LessonInvalidDateException("현재 시각 이후의 시각을 선택해주세요.")
     }
 }
