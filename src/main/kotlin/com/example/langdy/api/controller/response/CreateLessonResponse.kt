@@ -2,6 +2,7 @@ package com.example.langdy.api.controller.response
 
 import com.example.langdy.api.service.result.LessonResult
 import com.example.langdy.domain.entity.Lesson
+import com.fasterxml.jackson.annotation.JsonFormat
 import java.time.LocalDateTime
 
 data class CreateLessonResponse(
@@ -16,7 +17,9 @@ data class CreateLessonResponse(
     val studentId: Long,
     val studentName: String,
 
+    @field:JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
     val startAt: LocalDateTime,
+    @field:JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
     val endAt: LocalDateTime,
     val status: Lesson.Status,
 ) {

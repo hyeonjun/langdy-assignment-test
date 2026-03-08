@@ -9,6 +9,6 @@ data class FindAvailableTeachersRequest(
     val courseId: Long,
 
     @field:NotNull(message = "startAt은 필수입니다.")
-    @JsonFormat(pattern = "yyyy-MM-dd'T'HH:mm:ss")
+    @field:JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
     val startAt: LocalDateTime,
 )
