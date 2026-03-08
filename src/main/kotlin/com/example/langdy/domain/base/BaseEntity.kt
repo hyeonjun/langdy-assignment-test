@@ -20,12 +20,12 @@ abstract class BaseEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     val id: Long = 0
 
-    @Column(name = "`created_at`", nullable = false, updatable = false)
+    @Column(name = "created_at", nullable = false, updatable = false)
     @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
     @CreatedDate
     var createdAt: LocalDateTime = LocalDateTime.now()
 
-    @Column(name = "`updated_at`", nullable = false)
+    @Column(name = "updated_at", nullable = false)
     @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
     @LastModifiedDate
     var updatedAt: LocalDateTime = LocalDateTime.now()
