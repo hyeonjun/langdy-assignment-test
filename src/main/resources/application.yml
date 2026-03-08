@@ -1,0 +1,11 @@
+spring:
+  application:
+    name: langdy
+  profiles:
+    active: h2
+
+  jpa:
+    open-in-view: false
+    properties:
+      hibernate:
+        default_batch_fetch_size: 100
