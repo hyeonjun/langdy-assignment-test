@@ -15,10 +15,8 @@
 
 | 레이어 | 테스트 종류 | 도구 |
 |--------|-------------|------|
-| 도메인 | 단위 테스트 (순수 Kotlin) | JUnit 5, Kotest |
-| 서비스 | 단위 테스트 (Mock 의존성) | Mockito-Kotlin |
-| 레포지토리 | 슬라이스 테스트 | @DataJpaTest, H2 |
-| API | 통합 테스트 | @SpringBootTest, MockMvc |
+| 서비스 | 단위 테스트 (Mock 의존성) | JUnit 5, Mockito-Kotlin |
+| API | 슬라이스 테스트 | @WebMvcTest, MockMvc |
 | 동시성 | 병렬 요청 테스트 | CountDownLatch + ExecutorService |
 
 **규칙**
@@ -31,34 +29,180 @@
 ### DDD (Domain-Driven Design)
 비즈니스 도메인을 중심으로 코드를 구성한다.
 
-**패키지 구조 (레이어드 + DDD)**
+**실제 패키지 구조**
 
 ```
 com.example.langdy/
-├── domain/          ← 핵심 도메인 (순수 비즈니스 로직)
-│   ├── student/     ← 학생 Bounded Context
-│   ├── teacher/     ← 선생님 Bounded Context
-│   ├── course/      ← 수업 과정 Bounded Context
-│   └── lesson/      ← 수업 예약 Bounded Context (핵심)
-├── api/             ← 애플리케이션 서비스 (유스케이스 조합)
-│   ├── teacher/
-│   └── lesson/
-├── infra/           ← 인프라 어댑터 (외부 시스템 연동)
-│   ├── lock/        ← Redis 분산 락
-│   └── notification/
-├── global/          ← 공통 인프라 (예외, 리졸버)
-└── config/          ← 설정
+├── domain/                  ← 핵심 도메인 (엔티티 + 레포지토리)
+│   ├── entity/
+│   │   ├── Student.kt       ← 학생 (os: IOS/ANDROID)
+│   │   ├── Teacher.kt       ← 선생님
+│   │   ├── Course.kt        ← 수업 과정
+│   │   └── Lesson.kt        ← 수업 예약 (핵심, BOOKED/CANCELLED/DONE)
+│   ├── repository/
+│   │   ├── StudentRepository.kt
+│   │   ├── TeacherRepository.kt
+│   │   ├── CourseRepository.kt
+│   │   └── LessonRepository.kt
+│   └── base/
+│       └── BaseEntity.kt    ← createdAt, updatedAt (JPA Auditing)
+├── api/                     ← 애플리케이션 서비스 (유스케이스 조합)
+│   ├── controller/
+│   │   ├── LessonController.kt
+│   │   ├── request/
+│   │   │   ├── CreateLessonRequest.kt
+│   │   │   └── FindAvailableTeachersRequest.kt
+│   │   └── response/
+│   │       ├── CreateLessonResponse.kt
+│   │       └── FindAvailableTeacherResponse.kt
+│   └── service/
+│       ├── LessonService.kt
+│       └── result/
+│           ├── LessonResult.kt
+│           └── TeacherResult.kt
+├── infra/                   ← 인프라 어댑터
+│   ├── lock/
+│   │   └── LessonLockService.kt   ← Redis 분산 락
+│   └── event/lesson/
+│       ├── LessonEvents.kt        ← LessonCreated 이벤트 정의
+│       └── subscriber/
+│           └── LessonCreatedEventSubscriber.kt  ← 알림 발송 (AFTER_COMMIT + @Async)
+├── global/                  ← 공통 인프라
+│   ├── response/
+│   │   └── ResponseModel.kt       ← 통일된 API 응답 래퍼
+│   ├── exception/
+│   │   ├── ErrorType.kt           ← 에러 타입 인터페이스
+│   │   ├── ApplicationException.kt
+│   │   ├── LessonException.kt     ← sealed class + enum LessonErrorType
+│   │   └── GlobalExceptionHandler.kt
+│   └── interceptor/
+│       └── AuthenticationInterceptor.kt  ← X-Student-Id 헤더 인증
+└── config/
+    ├── SecurityConfig.kt    ← CSRF 비활성화, frameOptions 비활성화
+    ├── WebMvcConfig.kt      ← AuthenticationInterceptor 등록
+    ├── QueryDslConfig.kt    ← JPAQueryFactory Bean
+    └── JpaAuditingConfig.kt ← @EnableJpaAuditing
 ```
 
 **설계 원칙**
-- **도메인 순수성**: `domain/` 패키지는 Spring, JPA 외 외부 프레임워크 의존 최소화.
-- **풍부한 도메인 모델**: 비즈니스 규칙은 Entity/Value Object 안에 캡슐화.
-- **애플리케이션 서비스**: `api/` 레이어는 도메인 객체를 조합해 유스케이스를 완성. 자체 비즈니스 로직 없음.
-- **Bounded Context 격리**: 각 도메인은 Long FK로 참조. `@ManyToOne` 크로스 컨텍스트 연관관계 금지.
+- **애플리케이션 서비스**: `api/service` 레이어는 도메인 객체를 조합해 유스케이스를 완성. 자체 비즈니스 로직 없음.
+- **인터셉터 인증**: Spring Security는 모든 요청 허용, 실제 인증은 `AuthenticationInterceptor`가 `X-Student-Id` 헤더로 처리.
+- **통일 응답 포맷**: 모든 API는 `ResponseModel<T>` 래퍼로 반환. HTTP 상태는 항상 200, 비즈니스 상태는 `status` 필드로 구분.
 
 ---
 
-## 2. 알림 발송 아키텍처 (TASK 3)
+## 2. API 명세
+
+### 공통
+
+**요청 헤더**
+
+| 헤더 | 필수 | 설명 |
+|------|------|------|
+| `X-Student-Id` | 필수 | 학생 ID (Long) |
+
+**응답 포맷**
+
+```json
+{
+  "status": 0,
+  "data": { ... }
+}
+```
+
+성공 시 `status: 0`, 실패 시 비즈니스 에러 코드 반환.
+
+**에러 응답**
+
+```json
+{
+  "status": 400,
+  "error": {
+    "code": "LS0005",
+    "message": "이미 예약된 수업이 있습니다."
+  }
+}
+```
+
+### GET `/api/v1/lessons/available-teachers`
+
+수업 가능한 선생님 목록 조회.
+
+**Query Parameters**
+
+| 파라미터 | 타입 | 필수 | 형식 |
+|----------|------|------|------|
+| `courseId` | Long | 필수 | - |
+| `startAt` | LocalDateTime | 필수 | `yyyy-MM-dd HH:mm:ss` |
+
+**비즈니스 규칙**
+- `startAt`은 미래 시간이어야 한다.
+- `startAt`의 분은 0 또는 30이어야 한다 (정각/30분 단위).
+- 학생이 해당 시간에 이미 예약이 있으면 `LS0005` 에러.
+
+**응답 예시 (200 OK)**
+
+```json
+{
+  "status": 0,
+  "data": [
+    { "id": 1, "name": "선생님A" },
+    { "id": 2, "name": "선생님B" }
+  ]
+}
+```
+
+### POST `/api/v1/lessons`
+
+수업 예약.
+
+**Request Body**
+
+```json
+{
+  "courseId": 1,
+  "teacherId": 1,
+  "startAt": "2026-03-10T09:00:00"
+}
+```
+
+**비즈니스 규칙**
+- `startAt`은 미래 시간이어야 한다.
+- `startAt`의 분은 0 또는 30이어야 한다.
+- 선생님 또는 학생이 해당 시간에 이미 예약 중이면 `LS0005` 에러.
+- 수업 시간은 `startAt`부터 20분.
+
+**응답 예시 (200 OK)**
+
+```json
+{
+  "status": 0,
+  "data": {
+    "lessonId": 42,
+    "teacherName": "선생님A",
+    "courseName": "영어",
+    "startAt": "2026-03-10T09:00:00",
+    "endAt": "2026-03-10T09:20:00"
+  }
+}
+```
+
+### 에러 코드표
+
+| 코드 | HTTP Status (ResponseModel) | 의미 |
+|------|-----------------------------|------|
+| `LS0000` | 500 | 시스템 오류 |
+| `LS0001` | 400 | 인증 실패 (X-Student-Id 헤더 누락/잘못됨) |
+| `LS0002` | 400 | 잘못된 요청 |
+| `LS0003` | 404 | 엔티티 없음 (학생/선생님/수업과정/수업 ID 불일치) |
+| `LS0004` | 400 | 유효하지 않은 시간 (정각/30분 아님, 과거 시간) |
+| `LS0005` | 400 | 이미 예약된 시간 |
+| `LS0006` | 400 | 중복 예약 (DB UNIQUE 제약 위반) |
+| `LS0007` | 400 | 동시 요청 처리 중 (Redis 락 획득 실패) |
+
+---
+
+## 3. 알림 발송 아키텍처
 
 ### 설계 목표
 - 수업 예약 트랜잭션과 알림 발송을 **완전히 분리**한다.
@@ -72,133 +216,58 @@ com.example.langdy/
   │ POST /api/v1/lessons
   ▼
 [LessonController]
-  │
+  │ lessonLockService.lockCreateLesson() — Redis 락 획득
   ▼
-[LessonService.bookLesson()]
+[LessonService.createLesson()]
   │ @Transactional
-  ├─ 유효성 검증
-  ├─ [Redis 분산 락 획득]  ← LessonLockService.lockCreateLesson()
-  ├─ 중복 예약 체크
+  ├─ 유효성 검증 (시간 형식, 미래 여부)
+  ├─ Student / Teacher / Course 조회
+  ├─ 중복 예약 체크 (teacher OR student 기준)
   ├─ lessonRepository.save()   ← DB INSERT
-  ├─ eventPublisher.publishEvent(LessonBookedEvent)  ← 이벤트 버퍼에 적재
+  ├─ eventPublisher.publishEvent(LessonCreated)  ← 이벤트 버퍼에 적재
   │   (트랜잭션 커밋 전까지 리스너 미실행)
-  ├─ [Redis 락 해제]           ← stringRedisTemplate.unlink(key)
-  └─ return BookLessonResponse  → 201 CREATED 응답
+  └─ return lessonId
+       │
+       │ [Redis 락 해제 → getLessonDetail() → 201 응답]
        │
        │ [트랜잭션 커밋 성공]
        ▼
-[NotificationPublisher.onLessonBooked()]
+[LessonCreatedEventSubscriber.handleLessonCreated()]
+  │ @Async — 별도 스레드
   │ @TransactionalEventListener(AFTER_COMMIT)
-  │ @Async  ← 별도 스레드 풀
+  │ @Transactional(REQUIRES_NEW)
   ▼
 [publishNotification()]
-  │ NCloud SENS API 호출
-  ▼
-[카카오 알림톡 발송]
-  - 수신자: Student.phone
-  - 템플릿: LESSON_BOOKED
-  - 내용: "#{name}님, #{startAt} 수업이 예약되었습니다."
+  └─ TODO: NCloud SENS 카카오 알림톡 발송
 ```
 
 ### 핵심 결정 사항
 
-#### `@TransactionalEventListener(phase = AFTER_COMMIT)` 사용 이유
+#### `@TransactionalEventListener(phase = AFTER_COMMIT)`
+
 | 상황 | 동작 |
 |------|------|
 | 트랜잭션 커밋 성공 | 리스너 실행 → 알림 발송 |
 | 트랜잭션 롤백 | 리스너 **미실행** → 알림 미발송 (올바른 동작) |
 | `@EventListener` 사용 시 (잘못된 방법) | 롤백되어도 알림 발송됨 |
 
-#### `@Async` 사용 이유
+#### `@Async`
 - 알림톡 API 호출(외부 네트워크 I/O)이 예약 응답 P99에 영향을 주지 않음.
-- `@EnableAsync` + `ThreadPoolTaskExecutor` Bean 등록 필요.
 
-#### 장애 격리
-- `publishNotification()` 내부 예외는 catch 후 로깅만 수행.
-- 알림 발송 실패가 예약 성공 이력에 영향 없음.
-
-### NCloud SENS 카카오 알림톡 발송 구현 상세
-
-#### 인증 (HMAC-SHA256)
-```
-timestamp  = System.currentTimeMillis().toString()
-method     = "POST"
-url        = "/alimtalk/v2/services/{serviceId}/messages"
-message    = "{method}\n{url}\n{timestamp}\n{accessKey}"
-signature  = Base64(HMAC-SHA256(secretKey.toByteArray(), message.toByteArray()))
-
-요청 헤더:
-  Content-Type             : application/json
-  x-ncp-apigw-timestamp    : {timestamp}
-  x-ncp-iam-access-key     : {accessKey}
-  x-ncp-apigw-signature-v2 : {signature}
-```
-
-#### 요청 엔드포인트
-```
-POST https://sens.apigw.ntruss.com/alimtalk/v2/services/{serviceId}/messages
-```
-
-#### 요청 바디
-```json
-{
-  "plusFriendId": "@langdy",
-  "templateCode": "LESSON_BOOKED",
-  "messages": [
-    {
-      "to": "01012345678",
-      "content": "홍길동님, 2026-03-10 09:00 수업이 예약되었습니다.",
-      "buttons": [
-        {
-          "type": "WL",
-          "name": "예약 확인",
-          "linkMobile": "https://langdy.com/lessons/42"
-        }
-      ]
-    }
-  ]
-}
-```
-
-#### 신뢰성 전략
-| 전략 | 설명 |
-|------|------|
-| 재시도 | 최대 3회, 지수 백오프(1s → 2s → 4s) |
-| 멱등성 | 요청에 lessonId 포함 → 중복 발송 방지 |
-| 실패 로깅 | `notification_logs` 테이블에 SUCCESS/FAILED 기록 |
-| 재발송 | 실패 건 배치 또는 관리자 콘솔에서 재처리 |
-
-### 도메인 이벤트 설계
-
-```kotlin
-// 이벤트: 영속성 컨텍스트 의존 제거를 위해 필요한 값만 포함
-data class LessonBookedEvent(
-    val lessonId: Long,
-    val studentId: Long,
-    val teacherId: Long,
-    val courseId: Long,
-)
-
-// 발행: LessonService.bookLesson() 내부
-eventPublisher.publishEvent(LessonBookedEvent(...))
-
-// 수신: NotificationPublisher.onLessonBooked()
-@Async
-@TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
-fun onLessonBooked(event: LessonBookedEvent) { ... }
-```
+#### `@Transactional(REQUIRES_NEW)`
+- 별도 트랜잭션으로 알림 발송 실패가 예약 트랜잭션에 영향을 주지 않음.
 
 ---
 
-## 3. 동시성 제어 전략
+## 4. 동시성 제어 전략
 
 **3중 방어 레이어**
 
 | 레이어 | 수단 | 역할 |
 |--------|------|------|
 | Redis 분산 락 | `LessonLockService.lockCreateLesson()` | 동일 선생님+시간 요청을 직렬화, 선착순 1건만 통과 |
-| 애플리케이션 | `existsByTeacherIdAndStartAtAndStatusIn()` | 99% 케이스 조기 차단, 명확한 에러 메시지 |
-| DB | UNIQUE 제약조건 `(teacher_id, start_at, status)` | 동시 요청 최종 안전장치 |
+| 애플리케이션 | `existsBookedByTeacherOrStudent()` | 99% 케이스 조기 차단, 명확한 에러 메시지 |
+| DB | UNIQUE 제약조건 `(teacher_id, start_at, status)` / `(student_id, start_at, status)` | 동시 요청 최종 안전장치 |
 
 ### Redis 분산 락 설계
 
@@ -206,104 +275,89 @@ fun onLessonBooked(event: LessonBookedEvent) { ... }
 
 **락 키 설계**
 ```
-langdy:lesson:create:{teacherId}:{startAt}
+lesson:create:{teacherId}:{startAt}
 ```
-- 선생님 ID + 수업 시작 시간 조합으로 키를 구성한다.
-- 동일한 (선생님, 시간) 조합의 동시 요청만 직렬화하여, 다른 선생님/시간의 요청은 독립적으로 처리된다.
 
 **TTL 전략**
 - `setIfAbsent(key, "lock", Duration.ofSeconds(3))` — 3초 TTL.
-- TTL 내에 처리가 완료되면 `unlink(key)`로 즉시 해제한다.
-- 서버 장애로 `finally` 블록이 실행되지 않더라도 TTL 만료 시 자동 해제된다.
+- TTL 내 처리 완료 시 `unlink(key)`로 즉시 해제.
+- 서버 장애로 `finally` 미실행 시 TTL 만료 후 자동 해제.
 
-**`LessonLockService` 동작**
-```kotlin
-fun <T> lockCreateLesson(teacherId: Long, startAt: LocalDateTime, block: () -> T): T {
-    val key = "langdy:lesson:create:${teacherId}:${startAt}"
-    val locked = stringRedisTemplate.opsForValue()
-        .setIfAbsent(key, "lock", Duration.ofSeconds(3)) ?: false
-    if (!locked) throw BusinessException(ErrorCode.LESSON_LOCK_CONFLICT)
-    try {
-        return block()
-    } finally {
-        stringRedisTemplate.unlink(key)
-    }
-}
-```
-
-**에러 코드**
-
-| 에러 코드 | HTTP 상태 | 발생 조건 |
-|-----------|-----------|-----------|
-| `LESSON_LOCK_CONFLICT` | 409 CONFLICT | Redis 락 획득 실패 (동일 요청 처리 중) |
-| `TEACHER_ALREADY_BOOKED` | 409 CONFLICT | 앱 레이어 중복 체크 실패 |
-| `DUPLICATE_LESSON` | 409 CONFLICT | DB UNIQUE 제약 위반 |
-
-`DataIntegrityViolationException` → `GlobalExceptionHandler`에서 409 CONFLICT 반환.
+**락 획득 실패 시**: `LessonWaitingProcessingException` (LS0007, 400) 반환.
 
 ---
 
-## 4. 인프라 구성
+## 5. 인프라 구성
 
-### Docker Compose (`docker-compose.yml`)
+### 기술 스택
 
-```yaml
-services:
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis-data:/data
+| 분류 | 기술 |
+|------|------|
+| Language | Kotlin 1.9.25 |
+| Framework | Spring Boot 3.5.11 |
+| ORM | Spring Data JPA + QueryDSL 5.1.0 |
+| Database | H2 (인메모리, MODE=MySQL) |
+| Cache / Lock | Redis 7 (Spring Data Redis) |
+| Security | Spring Security (모든 요청 허용, 커스텀 인터셉터 인증) |
+| Build | Gradle (Kotlin JVM plugin) |
+| Runtime | JDK 21 (eclipse-temurin:21) |
+| Container | Docker + Docker Compose |
 
-  app:
-    build: .
-    ports:
-      - "8080:8080"
-    depends_on:
-      - redis
-    environment:
-      SPRING_DATA_REDIS_HOST: redis
-      SPRING_DATASOURCE_URL: jdbc:h2:mem:langdy;MODE=MySQL;DB_CLOSE_DELAY=-1
+### Docker Compose 구성
+
+```
+┌─────────────────────────────┐
+│        docker network        │
+│                              │
+│  ┌──────────┐  ┌──────────┐ │
+│  │   app    │  │  redis   │ │
+│  │  :8080   │──│  :6379   │ │
+│  └──────────┘  └──────────┘ │
+└─────────────────────────────┘
 ```
 
-- Redis 7-alpine: 분산 락에 사용하는 인메모리 저장소.
-- `depends_on: redis`: 앱 컨테이너가 Redis 준비 후 기동됨을 보장.
-- `SPRING_DATA_REDIS_HOST`: 컨테이너 네트워크 내 서비스 이름으로 Redis 접속.
+- **app**: Spring Boot 애플리케이션. `SPRING_DATA_REDIS_HOST=redis` 환경변수로 Redis 연결.
+- **redis**: 분산 락 전용 인메모리 저장소. `redis-data` 볼륨으로 영속성 확보.
+- **H2**: 인메모리 DB. Docker 실행 시 앱 컨테이너 내부에서 동작 (`SPRING_DATASOURCE_URL` 주입).
 
-### Dockerfile
+### Dockerfile (멀티 스테이지 빌드)
 
 ```dockerfile
+# Stage 1: 빌드
+FROM eclipse-temurin:21-jdk-alpine AS build
+WORKDIR /app
+COPY gradlew .
+COPY gradle gradle
+COPY build.gradle .
+COPY settings.gradle .
+RUN ./gradlew dependencies --no-daemon   # 의존성 레이어 캐시
+COPY src src
+RUN ./gradlew bootJar -x test --no-daemon
+
+# Stage 2: 실행
 FROM eclipse-temurin:21-jre-alpine
+WORKDIR /app
+COPY --from=build /app/build/libs/*.jar app.jar
+ENTRYPOINT ["java", "-jar", "app.jar"]
 ```
 
-- JRE 21 + Alpine Linux 기반으로 이미지 크기를 최소화한다.
+- `build.gradle`이 변경되지 않으면 의존성 다운로드 레이어 캐시 재사용.
+- JRE-only 이미지로 최종 이미지 크기 최소화.
 
-### application.yml — Redis 설정
+### application.yml 주요 설정
 
 ```yaml
 spring:
-  data:
-    redis:
-      host: ${SPRING_DATA_REDIS_HOST:localhost}
-      port: 6379
-```
-
-- 환경변수 `SPRING_DATA_REDIS_HOST`로 호스트를 주입받으며, 로컬 실행 시 기본값 `localhost` 사용.
-
----
-
-## 5. API 명세
-
-| Task | Method | URL | 헤더 | 응답 코드 |
-|------|--------|-----|------|-----------|
-| #1 | GET | `/api/v1/teachers/available?courseId=1&startAt=2026-03-10T09:00:00` | - | 200 |
-| #2 | POST | `/api/v1/lessons` | `X-Student-Id: {id}` | 201 |
-
-### 에러 응답 형식
-```json
-{
-  "code": "TEACHER_ALREADY_BOOKED",
-  "message": "해당 선생님은 이미 예약된 시간입니다."
-}
+  data.redis:
+    host: ${SPRING_DATA_REDIS_HOST:localhost}  # 로컬: localhost, Docker: redis
+    port: 6379
+  datasource:
+    url: jdbc:h2:mem:langdy;MODE=MySQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+  h2.console:
+    enabled: true
+    path: /h2-console
+    settings.web-allow-others: true   # Docker 컨테이너 외부 접근 허용
+  jpa:
+    hibernate.ddl-auto: create-drop   # 앱 기동 시 스키마 자동 생성/삭제
+    show-sql: true
 ```
